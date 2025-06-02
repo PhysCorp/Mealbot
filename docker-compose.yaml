@@ -5,8 +5,6 @@ services:
     build: .
     container_name: mealbot
     image: mealbot:latest
-    volumes:
-      - ./data/foodbot.db:/app/foodbot.db
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
