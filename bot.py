@@ -128,15 +128,23 @@ async def on_message(message):
         async with message.channel.typing():
             classification = classify_meal_with_gemini(image_url, description_text)
 
-            # --------------- Organized output for Discord ---------------
+            # --------------- New: If no description_text, infer food name from image ---------------
+            if not description_text and image_url:
+                try:
+                    inferred_name = infer_food_name_from_image(image_url)
+                    food_name = inferred_name
+                except Exception as e:
+                    logger.error(f"Error inferring food name: {e}")
+                    food_name = "your meal"
+            else:
+                food_name = description_text or "your meal"
 
             # 1) Current meal breakdown (fractions)
             breakdown_lines = ["**📝 Current Meal Breakdown (fractions of weekly goals):**"]
             for grp, frac in classification.items():
                 breakdown_lines.append(f"- **{grp.capitalize():<10}**: {frac:.2f}")
 
-            # 2) Generate a personalized meal tip via Gemini, including the food name (description)
-            food_name = description_text or "your meal"
+            # 2) Generate a personalized meal tip via Gemini, including the food name
             tip = generate_meal_tip(classification, food_name)
 
             # 3) Save classification to SQLite
@@ -319,6 +327,44 @@ def classify_meal_with_gemini(image_url: str, text_description: str):
             result[grp] = 0.0
 
     return result
+
+
+def infer_food_name_from_image(image_url: str) -> str:
+    """
+    Uses Gemini to generate a short description of the food in the image,
+    returning a human-readable name (e.g., "kale salad" or "spaghetti").
+    Raises RuntimeError if it cannot infer a name.
+    """
+    # Build a prompt to ask Gemini for a brief caption
+    prompt_instruction = (
+        "You are a food recognition assistant. Look at the attached image "
+        "and provide a brief description of the main food item in one or two words. "
+        "For example: 'kale salad', 'spaghetti', 'chicken sandwich'. "
+        "If unsure, say 'a meal'."
+    )
+    contents = [prompt_instruction]
+
+    # Fetch image bytes and wrap as Part
+    try:
+        resp = requests.get(image_url)
+        resp.raise_for_status()
+        mime_type = resp.headers.get("Content-Type", "image/jpeg")
+        image_bytes = resp.content
+        image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+        contents.append(image_part)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Failed to fetch image for inference: {e}")
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-1.5-flash-8b",
+            contents=contents,
+            config=types.GenerateContentConfig(response_modalities=["TEXT"])
+        )
+        raw_text = response.text or ""
+        return raw_text.strip()
+    except Exception as e:
+        raise RuntimeError(f"Error inferring food name: {e}")
 
 
 def generate_meal_tip(classification: dict, food_name: str) -> str:
